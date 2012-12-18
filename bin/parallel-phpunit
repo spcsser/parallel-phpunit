@@ -136,6 +136,12 @@ function get_free_thread {
     echo '-1'
 }
 
+#check system
+
+if  ! which pgrep > /dev/null; then
+    echo "Please install pgrep"
+    exit 1
+fi
 
 echo "Running parallel wrapper for phpunit"
 
