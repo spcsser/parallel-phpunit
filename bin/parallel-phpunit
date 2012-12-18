@@ -9,6 +9,7 @@ CFG_PHPUNIT_CMD='phpunit'
 CFG_TEST_MASK="*Test.php"
 CFG_VERBOSE=0
 
+
 function show_help {
     echo "Paralleling options:"
     echo "    --pu-cmd - custom phpunit run script, default $CFG_PHPUNIT_CMD"
@@ -45,7 +46,15 @@ function set_config {
 
 
 function test_files {
-    find $ROOT -name \*$CFG_TEST_MASK
+    if [[ $ARGS == *--group* ]];then
+        param=$ARGS
+        param=${param#*--group}
+        param=${param%--*}
+        param=${param//,/\\|}
+        grep -F -R -s --include=$CFG_TEST_MASK '@group' $ROOT | awk '{ print $1 " " $4}' | grep "$param" | awk '{print $1}' | sed 's/://' | sort | uniq
+    else
+        find $ROOT -name \*$CFG_TEST_MASK
+    fi
 }
 
 function replace {
