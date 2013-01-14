@@ -32,8 +32,37 @@ function set_config {
 }
 
 
+function get_all_files {
+    mask=${TEST_SUFFIX/,/"' -o -name '*"}
+    mask=" \( -name '*$mask' \)"
+
+    cmd="find  $ROOT  $mask"
+    eval $cmd
+}
+
+# search test files
+# when use option --group, run files only required files
 function test_files {
-    find $ROOT `echo "$TEST_SUFFIX" | sed 's|^| -name *|g' | sed 's|,| -o -name *|'` | sort
+    local testfiles=`get_all_files`
+    if [[ $ARGS == *--group* ]];then
+        local param=$ARGS
+        param=${param#*--group}
+        param=${param%--*}
+        param=${param//,/\\|}
+        param=`echo $param | tr -d " "`
+        for testfile in $testfiles
+        do
+            isFound=`grep -F -s '@group' $testfile | grep "$param"`
+            if [ ! -z "$isFound" ];then
+                echo $testfile
+            fi
+        done
+    else
+        for testfile in $testfiles
+        do
+            echo $testfile
+        done
+    fi
 }
 
 function replace {
@@ -163,7 +192,6 @@ do
     while [ `child_processes` -ge $CFG_MAX_THREAD ]
     do
         sleep 1
-        print_summary
     done
     #extract dir
     dir="$filename"
@@ -186,7 +214,6 @@ done
 while [ `child_processes` -gt 0 ]
 do
     sleep 1
-    print_summary
 done
 print_summary
 test -z "$junit_file" || write_combined_junit $junit_file
