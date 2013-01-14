@@ -6,55 +6,34 @@ ARGS="${@:1:$(($#-1))}" # remove last argument
 PHPUNIT_ARG=''
 CFG_MAX_THREAD=3
 CFG_PHPUNIT_CMD='phpunit'
-CFG_TEST_MASK="*Test.php"
-CFG_VERBOSE=0
+TEST_SUFFIX="Test.php,.phpt"
 
 
 function show_help {
     echo "Paralleling options:"
     echo "    --pu-cmd - custom phpunit run script, default $CFG_PHPUNIT_CMD"
-    echo "    --pu-thread - max threads, default $CFG_MAX_THREAD"
-    echo "    --pu-test-mask - tests file template, default $CFG_TEST_MASK"
-    echo "    --pu-verbose - show addional information (0|1), default $CFG_VERBOSE"
+    echo "    --pu-threads - max threads, default $CFG_MAX_THREAD"
     echo "Usage: parallel-phpunit [switches] <directory>"
-    echo ""
     exit 1
 }
 
 function set_config {
-    local pos=`expr index $1 '='`
+    local pos=`echo "$1" | sed 's|=.*||' | wc -c`
     local paramName=${1:0:$pos-1}
     local paramValue=${1:$pos}
     case $paramName in
-        --pu-thread)
-            CFG_MAX_THREAD="$paramValue"
+        --pu-threads)
+            test "$paramValue" -lt 1 || CFG_MAX_THREAD="$paramValue"
             ;;
         --pu-cmd)
             CFG_PHPUNIT_CMD="$paramValue"
-            ;;
-        --pu-test-mask)
-            CFG_TEST_MASK="$paramValue"
-            ;;
-        --pu-verbose)
-            if [ ! $paramValue -eq 0 ];then
-                paramValue=1
-            fi
-            CFG_VERBOSE="$paramValue"
             ;;
     esac
 }
 
 
 function test_files {
-    if [[ $ARGS == *--group* ]];then
-        param=$ARGS
-        param=${param#*--group}
-        param=${param%--*}
-        param=${param//,/\\|}
-        grep -F -R -s --include=$CFG_TEST_MASK '@group' $ROOT | awk '{ print $1 " " $4}' | grep "$param" | awk '{print $1}' | sed 's/://' | sort | uniq
-    else
-        find $ROOT -name \*$CFG_TEST_MASK
-    fi
+    find $ROOT `echo "$TEST_SUFFIX" | sed 's|^| -name *|g' | sed 's|,| -o -name *|'` | sort
 }
 
 function replace {
@@ -72,7 +51,7 @@ function in_array() {
 }
 
 function child_processes {
-    pgrep -P ${PID} | grep -v 'sleep' | wc -l
+    jobs -p | xargs ps -o pid= -p $! | wc -l
 }
 
 function count {
@@ -94,15 +73,12 @@ function write_combined_junit {
 
 function on_exit {
     pkill -TERM -P ${PID} &
-    while [ `child_processes` -gt 1 ]
+    while [ `child_processes` -gt 0 ]
     do
         sleep 1
     done
     find $ROOT -name parallel-phpunit.${PID}* -delete
 }
-
-trap "on_exit" EXIT
-
 
 function refresh_threads {
     declare -a child_list=("${!1}")
@@ -143,19 +119,17 @@ if  ! which pgrep > /dev/null; then
     exit 1
 fi
 
-echo "Running parallel wrapper for phpunit"
+echo "Running parallel-phpunit 1.1"
 
 #check parameters
 
 if [ ! -d "$ROOT" ];then
-    if [ -f 'phpunit.xml' ];then
-        echo "Execute using config file not supported"
-    fi
     show_help
     exit 1
 fi
 
 #extract extended options
+ARGS=`echo "$ARGS" | sed 's|--pu-threads[ =]*|--pu-threads=|' | sed 's|--pu-cmd[ =]*|--pu-cmd=|'`
 for param in $ARGS
 do
     if [ ${param:0:4} = '--pu' ];then
@@ -165,10 +139,10 @@ do
     fi
 done
 
-
 # init vars
 threads=()
 i=0
+true & # ensure that $! is set
 while [ $i -lt $CFG_MAX_THREAD ]
 do
     threads[$i]=0
@@ -176,17 +150,20 @@ do
 done
 
 junit_file=`echo "$PHPUNIT_ARG" | grep "\-\-log-junit " | sed 's|.*--log-junit [ ]*||' | sed 's| .*||'`
-if [ $CFG_VERBOSE -eq 1 ];then
-    echo "PID: $PID"
-fi
+test_suffix=`echo "$PHPUNIT_ARG " | sed 's|.*--test-suffix[ =]*||' | sed 's| .*||'`
+test -z "$test_suffix" || TEST_SUFFIX=$test_suffix
+
+trap "on_exit" EXIT
+
 #execute tests
 i=0
 for filename in `test_files`
 do
     #check active process
-    while [ `child_processes` -gt $CFG_MAX_THREAD ]
+    while [ `child_processes` -ge $CFG_MAX_THREAD ]
     do
         sleep 1
+        print_summary
     done
     #extract dir
     dir="$filename"
@@ -199,19 +176,17 @@ do
     thread_id=`get_free_thread threads[@]`
     #execute
     log=$dir/parallel-phpunit.${PID}.${i}.log
-    args="`replace "$PHPUNIT_ARG" log-junit $dir/parallel-phpunit.${PID}.${i}.junit` $filename"
-    echo "Starting command: phpunit $args thread_id $thread_id"
-    (($CFG_PHPUNIT_CMD -d parallel-phpunit-thread=${thread_id} $args || touch $dir/parallel-phpunit.${PID}.${i}.fail) &> $log; echo "Command ended: phpunit $args"; grep -v "parallel-phpunit-pid=" $log) &
+    command="$CFG_PHPUNIT_CMD`replace "$PHPUNIT_ARG" log-junit $dir/parallel-phpunit.${PID}.${i}.junit`$filename"
+    echo "Starting command with thread $thread_id: $command"
+    (($command || touch $dir/parallel-phpunit.${PID}.${i}.fail) &> $log; echo "Command ended: $command"; cat $log) &
     threads[$thread_id]=$!
-    if [ $CFG_VERBOSE -eq 1 ];then
-        echo "Run test with pid: $!, thread id: $thread_id"
-    fi
 done
 
 #report progress when some phpunit execution is still running
-while [ `child_processes` -gt 1 ]
+while [ `child_processes` -gt 0 ]
 do
-    sleep 2
+    sleep 1
+    print_summary
 done
 print_summary
 test -z "$junit_file" || write_combined_junit $junit_file
