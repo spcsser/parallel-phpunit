@@ -212,4 +212,4 @@ done
 print_summary
 
 test -z "$junit_file" || write_combined_junit $junit_file
-test -z "`find $ROOT -name parallel-phpunit.${PID}.*.fail`"
+test -z "`find $ROOT -name parallel-phpunit.${PID}.* -delete`"
