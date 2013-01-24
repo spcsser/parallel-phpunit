@@ -124,7 +124,17 @@ function write_combined_junit {
 
 
 function on_exit {
-    pkill -TERM -P ${PID} &
+    
+    for cid in $threads
+    do
+        if [ $cid -gt 0 ];then
+            pkill -TERM -P ${cid} &
+        fi
+    done
+    while [ `child_processes threads[@]` -gt 0 ]
+    do
+        sleep 1
+    done
     find $ROOT -name parallel-phpunit.${PID}* -delete
 }
 
@@ -237,7 +247,7 @@ while [ `child_processes threads[@]` -gt 0 ]
 do
     sleep 1
 done
-
+print_summary
 test -z "$junit_file" || write_combined_junit $junit_file
 test -z "`find $ROOT -name parallel-phpunit.${PID}.*.fail`"
-print_summary
+
